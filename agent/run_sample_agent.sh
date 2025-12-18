@@ -17,7 +17,7 @@ else
   exit 1
 fi
 
-export BREACH_HUNTER_URL="${BREACH_HUNTER_URL:-http://breach-hunter-api:8000/notify}"
+export BREACH_HUNTER_URL="${BREACH_HUNTER_URL:-http://breach-hunter-server:8000/notify}"
 export DEMO_AGENT_ID="${DEMO_AGENT_ID:-demo-agent-001}"
 
 echo "[Runner] Using BREACH_HUNTER_URL=${BREACH_HUNTER_URL}"

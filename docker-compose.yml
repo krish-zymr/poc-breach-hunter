@@ -1,11 +1,11 @@
 version: "3.9"
 
 services:
-  breach-hunter-api:
-    container_name: breach-hunter-api
+  breach-hunter-server:
+    container_name: breach-hunter-server
     build:
       context: .
-      dockerfile: breach-hunter-server/Dockerfile
+      dockerfile: server/Dockerfile
     ports:
       - "8000:8000"
 
@@ -15,16 +15,16 @@ services:
       context: .
       dockerfile: agent/Dockerfile
     depends_on:
-      - breach-hunter-api
+      - breach-hunter-server
     environment:
-      - BREACH_HUNTER_URL=http://breach-hunter-api:8000/notify
+      - BREACH_HUNTER_URL=http://breach-hunter-server:8000/notify
       - DEMO_AGENT_ID=demo-agent-001
 
   breach-hunter-client:
     container_name: breach-hunter-client
     build:
       context: .
-      dockerfile: breach-hunter-client/Dockerfile
+      dockerfile: client/Dockerfile
     ports:
       - "3000:80"
 
