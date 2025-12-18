@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import './ActionsPage.css'
 
 const API_BASE = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:8000' : '/api')
@@ -17,6 +17,9 @@ function ActionsPage() {
   const [selectedAgent, setSelectedAgent] = useState('')
   const [selectedStatus, setSelectedStatus] = useState('')
   const [selectedActionType, setSelectedActionType] = useState('')
+  
+  // Expanded rows
+  const [expandedRows, setExpandedRows] = useState(new Set())
 
   useEffect(() => {
     fetchAgents()
@@ -24,6 +27,13 @@ function ActionsPage() {
 
   useEffect(() => {
     fetchActions()
+    
+    // Auto-refresh every 3 seconds to show evaluation updates
+    const interval = setInterval(() => {
+      fetchActions()
+    }, 3000)
+    
+    return () => clearInterval(interval)
   }, [page, searchQuery, selectedAgent, selectedStatus, selectedActionType])
 
   const fetchAgents = async () => {
@@ -91,6 +101,28 @@ function ActionsPage() {
     setPage(1)
   }
 
+  const toggleRow = (actionId) => {
+    setExpandedRows((prev) => {
+      const newSet = new Set(prev)
+      if (newSet.has(actionId)) {
+        newSet.delete(actionId)
+      } else {
+        newSet.add(actionId)
+      }
+      return newSet
+    })
+  }
+
+  const getRiskBadgeClass = (risk) => {
+    if (!risk) return 'risk-badge risk-unknown'
+    const riskUpper = risk.toUpperCase()
+    if (riskUpper === 'CRITICAL') return 'risk-badge risk-critical'
+    if (riskUpper === 'HIGH') return 'risk-badge risk-high'
+    if (riskUpper === 'MEDIUM') return 'risk-badge risk-medium'
+    if (riskUpper === 'LOW') return 'risk-badge risk-low'
+    return 'risk-badge risk-unknown'
+  }
+
   return (
     <div className="actions-page">
       <div className="page-header">
@@ -147,6 +179,8 @@ function ActionsPage() {
             >
               <option value="">All Statuses</option>
               <option value="NEW">NEW</option>
+              <option value="UNDER_EVALUATION">UNDER_EVALUATION</option>
+              <option value="EVALUATED">EVALUATED</option>
             </select>
           </div>
 
@@ -190,55 +224,158 @@ function ActionsPage() {
             <table className="actions-table">
               <thead>
                 <tr>
+                  <th style={{ width: '30px' }}></th>
                   <th>ID</th>
                   <th>Agent ID</th>
-                  <th>Process ID</th>
-                  <th>Host Address</th>
                   <th>Action Type</th>
-                  <th>Details</th>
                   <th>Status</th>
+                  <th>Risk</th>
+                  <th>Intent</th>
                   <th>Timestamp</th>
                 </tr>
               </thead>
               <tbody>
-                {actions.map((action) => (
-                  <tr key={action.id}>
-                    <td className="action-id">{action.id}</td>
-                    <td className="agent-id-cell">
-                      <code>{action.agent_id}</code>
-                    </td>
-                    <td className="process-id">
-                      {action.process_id ? (
-                        <code>{action.process_id}</code>
-                      ) : (
-                        <span className="text-muted">N/A</span>
+                {actions.map((action) => {
+                  const isExpanded = expandedRows.has(action.id)
+                  return (
+                    <React.Fragment key={action.id}>
+                      <tr
+                        className={isExpanded ? 'row-expanded' : ''}
+                        onClick={() => toggleRow(action.id)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <td className="expand-icon">
+                          {isExpanded ? '▼' : '▶'}
+                        </td>
+                        <td className="action-id">{action.id}</td>
+                        <td className="agent-id-cell">
+                          <code>{action.agent_id}</code>
+                        </td>
+                        <td>
+                          <span className="action-type-badge">
+                            {action.action_type}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`status-badge status-${action.status.toLowerCase().replace('_', '-')}`}>
+                            {action.status}
+                          </span>
+                        </td>
+                        <td>
+                          {action.risk ? (
+                            <span className={getRiskBadgeClass(action.risk)}>
+                              {action.risk}
+                            </span>
+                          ) : (
+                            <span className="text-muted">-</span>
+                          )}
+                        </td>
+                        <td className="intent-cell">
+                          {action.intent ? (
+                            <span className="intent-text">{action.intent}</span>
+                          ) : (
+                            <span className="text-muted">-</span>
+                          )}
+                        </td>
+                        <td className="timestamp">
+                          {formatDate(action.timestamp)}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="expanded-row-details">
+                          <td colSpan="8">
+                            <div className="expanded-content">
+                              <div className="detail-section">
+                                <h4>Action Details</h4>
+                                <div className="detail-grid">
+                                  <div className="detail-item">
+                                    <span className="detail-label">Process ID:</span>
+                                    <span className="detail-value">
+                                      {action.process_id || 'N/A'}
+                                    </span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">Host Address:</span>
+                                    <span className="detail-value">
+                                      {action.host_address || 'N/A'}
+                                    </span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">Details:</span>
+                                    <span className="detail-value">
+                                      {formatActionDetails(action.action_details)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              {action.status === 'EVALUATED' && (
+                                <div className="detail-section">
+                                  <h4>Evaluation Results</h4>
+                                  <div className="detail-grid">
+                                    <div className="detail-item">
+                                      <span className="detail-label">Evaluation By:</span>
+                                      <span className="detail-value">
+                                        {action.evaluation_by || 'N/A'}
+                                      </span>
+                                    </div>
+                                    <div className="detail-item">
+                                      <span className="detail-label">Intent:</span>
+                                      <span className="detail-value">
+                                        {action.intent || 'N/A'}
+                                      </span>
+                                    </div>
+                                    <div className="detail-item">
+                                      <span className="detail-label">Risk:</span>
+                                      <span className="detail-value">
+                                        {action.risk ? (
+                                          <span className={getRiskBadgeClass(action.risk)}>
+                                            {action.risk}
+                                          </span>
+                                        ) : (
+                                          'N/A'
+                                        )}
+                                      </span>
+                                    </div>
+                                    <div className="detail-item">
+                                      <span className="detail-label">Time Taken:</span>
+                                      <span className="detail-value">
+                                        {action.evaluation_time_taken
+                                          ? `${action.evaluation_time_taken}s`
+                                          : 'N/A'}
+                                      </span>
+                                    </div>
+                                    <div className="detail-item full-width">
+                                      <span className="detail-label">Description:</span>
+                                      <div className="detail-value description-text">
+                                        {action.evaluation_description || 'N/A'}
+                                      </div>
+                                    </div>
+                                    {action.evaluation_timestamp && (
+                                      <div className="detail-item">
+                                        <span className="detail-label">Evaluated At:</span>
+                                        <span className="detail-value">
+                                          {formatDate(action.evaluation_timestamp)}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                              {action.status === 'UNDER_EVALUATION' && (
+                                <div className="detail-section">
+                                  <div className="evaluating-indicator">
+                                    <span className="spinner">⏳</span>
+                                    <span>Evaluation in progress...</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                    <td className="host-address">
-                      {action.host_address ? (
-                        <code>{action.host_address}</code>
-                      ) : (
-                        <span className="text-muted">N/A</span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="action-type-badge">
-                        {action.action_type}
-                      </span>
-                    </td>
-                    <td className="action-details">
-                      {formatActionDetails(action.action_details)}
-                    </td>
-                    <td>
-                      <span className="status-badge status-new">
-                        {action.status}
-                      </span>
-                    </td>
-                    <td className="timestamp">
-                      {formatDate(action.timestamp)}
-                    </td>
-                  </tr>
-                ))}
+                    </React.Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>

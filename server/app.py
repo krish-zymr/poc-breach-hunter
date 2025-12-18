@@ -5,6 +5,10 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 import json
 import sys
+import os
+import asyncio
+import time
+from openai import OpenAI
 
 
 app = FastAPI(title="Breach Hunter", version="0.2.0")
@@ -48,6 +52,13 @@ class StoredAction(BaseModel):
     status: str = Field(default="NEW", description="Lifecycle status of the action")
     process_id: Optional[int] = Field(default=None, description="Process ID of the agent")
     host_address: Optional[str] = Field(default=None, description="Host address (hostname or IP) of the agent")
+    # Evaluation fields
+    evaluation_by: Optional[str] = Field(default=None, description="Who evaluated this action (e.g., 'OpenAI GPT-4')")
+    intent: Optional[str] = Field(default=None, description="Detected intent of the action")
+    risk: Optional[str] = Field(default=None, description="Risk classification (e.g., 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL')")
+    evaluation_time_taken: Optional[float] = Field(default=None, description="Time taken for evaluation in seconds")
+    evaluation_description: Optional[str] = Field(default=None, description="Detailed description of the evaluation")
+    evaluation_timestamp: Optional[datetime] = Field(default=None, description="When the evaluation was completed")
 
 
 class StoredAgent(BaseModel):
@@ -69,6 +80,12 @@ class PaginatedResponse(BaseModel):
 ACTION_ID_SEQ = 0
 ACTIONS: List[StoredAction] = []
 AGENTS: Dict[str, StoredAgent] = {}
+
+# OpenAI client (initialized if API key is available)
+OPENAI_CLIENT: Optional[OpenAI] = None
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if OPENAI_API_KEY:
+    OPENAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def _next_action_id() -> int:
@@ -220,4 +237,167 @@ async def list_actions(
         page=page,
         page_size=page_size,
     )
+
+
+async def evaluate_action_with_openai(action: StoredAction) -> Dict[str, Any]:
+    """
+    Evaluate an action using OpenAI to determine intent and risk classification.
+    Returns a dictionary with evaluation results.
+    """
+    if not OPENAI_CLIENT:
+        return {
+            "evaluation_by": None,
+            "intent": "Evaluation unavailable",
+            "risk": "UNKNOWN",
+            "evaluation_time_taken": 0.0,
+            "evaluation_description": "OpenAI API key not configured",
+        }
+
+    start_time = time.time()
+
+    # Build context for OpenAI
+    action_context = {
+        "agent_id": action.agent_id,
+        "action_type": action.action_type,
+        "process_id": action.process_id,
+        "host_address": action.host_address,
+        "timestamp": action.timestamp.isoformat(),
+    }
+
+    # Add action-specific details
+    details = action.action_details
+    if details.command:
+        action_context["command"] = details.command
+    if details.file_path:
+        action_context["file_path"] = details.file_path
+    if details.url:
+        action_context["url"] = details.url
+    if details.method:
+        action_context["method"] = details.method
+
+    prompt = f"""You are a security analyst evaluating AI agent actions for potential security risks.
+
+Action Details:
+- Agent ID: {action_context.get('agent_id', 'N/A')}
+- Action Type: {action_context.get('action_type', 'N/A')}
+- Process ID: {action_context.get('process_id', 'N/A')}
+- Host Address: {action_context.get('host_address', 'N/A')}
+- Timestamp: {action_context.get('timestamp', 'N/A')}
+"""
+
+    if details.command:
+        prompt += f"- Command: {details.command}\n"
+    if details.file_path:
+        prompt += f"- File Path: {details.file_path}\n"
+    if details.url:
+        prompt += f"- URL: {details.url}\n"
+    if details.method:
+        prompt += f"- HTTP Method: {details.method}\n"
+
+    prompt += """
+Analyze this action and provide:
+1. INTENT: What is the likely intent/purpose of this action? (e.g., "File read operation", "Network request", "System command execution")
+2. RISK: Classify the risk level as one of: LOW, MEDIUM, HIGH, CRITICAL
+3. DESCRIPTION: A brief explanation of why this risk level was assigned and what security concerns exist.
+
+Respond in JSON format with these exact keys:
+{
+  "intent": "...",
+  "risk": "LOW|MEDIUM|HIGH|CRITICAL",
+  "description": "..."
+}
+"""
+
+    try:
+        response = OPENAI_CLIENT.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a security analyst specializing in AI agent behavior analysis. Always respond with valid JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=500,
+        )
+
+        content = response.choices[0].message.content.strip()
+        # Try to extract JSON from the response
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+
+        eval_result = json.loads(content)
+        time_taken = time.time() - start_time
+
+        return {
+            "evaluation_by": "OpenAI GPT-4",
+            "intent": eval_result.get("intent", "Unknown"),
+            "risk": eval_result.get("risk", "UNKNOWN").upper(),
+            "evaluation_time_taken": round(time_taken, 2),
+            "evaluation_description": eval_result.get("description", "No description provided"),
+        }
+    except Exception as e:
+        time_taken = time.time() - start_time
+        return {
+            "evaluation_by": "OpenAI GPT-4",
+            "intent": "Evaluation failed",
+            "risk": "UNKNOWN",
+            "evaluation_time_taken": round(time_taken, 2),
+            "evaluation_description": f"Error during evaluation: {str(e)}",
+        }
+
+
+async def background_evaluation_worker():
+    """
+    Background worker that continuously polls for NEW actions and evaluates them.
+    """
+    while True:
+        try:
+            # Find actions with status NEW
+            new_actions = [a for a in ACTIONS if a.status == "NEW"]
+
+            for action in new_actions:
+                # Update status to UNDER_EVALUATION
+                action.status = "UNDER_EVALUATION"
+
+                # Perform evaluation
+                eval_result = await evaluate_action_with_openai(action)
+
+                # Update action with evaluation results
+                action.status = "EVALUATED"
+                action.evaluation_by = eval_result.get("evaluation_by")
+                action.intent = eval_result.get("intent")
+                action.risk = eval_result.get("risk")
+                action.evaluation_time_taken = eval_result.get("evaluation_time_taken")
+                action.evaluation_description = eval_result.get("evaluation_description")
+                action.evaluation_timestamp = datetime.now(timezone.utc)
+
+                print(
+                    f"[Evaluation] Action {action.id} evaluated: Risk={action.risk}, Intent={action.intent}",
+                    file=sys.stdout,
+                    flush=True,
+                )
+
+            # Sleep for 2 seconds before next poll
+            await asyncio.sleep(2)
+        except Exception as e:
+            print(f"[Evaluation Worker] Error: {e}", file=sys.stderr, flush=True)
+            await asyncio.sleep(5)  # Wait longer on error
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Start the background evaluation worker on server startup."""
+    if OPENAI_CLIENT:
+        asyncio.create_task(background_evaluation_worker())
+        print("[Startup] Background evaluation worker started", file=sys.stdout, flush=True)
+    else:
+        print(
+            "[Startup] OpenAI API key not configured. Evaluation worker not started.",
+            file=sys.stdout,
+            flush=True,
+        )
 
