@@ -8,10 +8,22 @@ import sys
 import os
 import asyncio
 import time
-from openai import OpenAI
+import traceback
+from openai import OpenAI, AsyncOpenAI
 
+# Module-level log to confirm file is loaded
+print(
+    f"[Module Load] app.py module loaded at {datetime.now(timezone.utc).isoformat()}",
+    file=sys.stdout,
+    flush=True,
+)
 
 app = FastAPI(title="Breach Hunter", version="0.2.0")
+print(
+    f"[Module Load] FastAPI app instance created",
+    file=sys.stdout,
+    flush=True,
+)
 
 # Add CORS middleware
 app.add_middleware(
@@ -81,30 +93,107 @@ ACTION_ID_SEQ = 0
 ACTIONS: List[StoredAction] = []
 AGENTS: Dict[str, StoredAgent] = {}
 
-# OpenAI client (initialized lazily if API key is available)
+# Background task reference (to prevent garbage collection)
+BACKGROUND_TASK: Optional[asyncio.Task] = None
+
+# OpenAI clients (initialized lazily if API key is available)
 OPENAI_CLIENT: Optional[OpenAI] = None
+OPENAI_ASYNC_CLIENT: Optional[AsyncOpenAI] = None
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 def get_openai_client() -> Optional[OpenAI]:
-    """Get or initialize OpenAI client. Returns None if API key is not configured."""
+    """Get or initialize synchronous OpenAI client. Returns None if API key is not configured."""
     global OPENAI_CLIENT
     if OPENAI_CLIENT is not None:
         return OPENAI_CLIENT
     
     if not OPENAI_API_KEY:
+        print(
+            "[OpenAI] API key not configured, skipping client initialization",
+            file=sys.stdout,
+            flush=True,
+        )
         return None
     
     try:
+        # Explicitly create client with only api_key to avoid any proxy/environment issues
+        # Check OpenAI library version compatibility
+        import openai
+        print(
+            f"[OpenAI] Initializing sync client with OpenAI library version: {openai.__version__}",
+            file=sys.stdout,
+            flush=True,
+        )
+        
+        # Initialize with explicit api_key only
+        # Note: If you see 'proxies' parameter errors, it's likely a version compatibility
+        # issue between openai and httpx. Upgrade openai to >=1.55.3 or downgrade httpx to 0.27.2
         OPENAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
-        print("[OpenAI] Client initialized successfully", file=sys.stdout, flush=True)
+        print(
+            f"[OpenAI] Sync client initialized successfully",
+            file=sys.stdout,
+            flush=True,
+        )
         return OPENAI_CLIENT
     except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e)
         print(
-            f"[OpenAI] Failed to initialize client: {e}",
+            f"[OpenAI] Failed to initialize sync client: {error_type}: {error_msg}",
             file=sys.stderr,
             flush=True,
         )
+        # Print full traceback for debugging
+        import traceback
+        print(
+            f"[OpenAI] Traceback:\n{traceback.format_exc()}",
+            file=sys.stderr,
+            flush=True,
+        )
+        OPENAI_CLIENT = None  # Ensure it's set to None on failure
+        return None
+
+
+def get_openai_async_client() -> Optional[AsyncOpenAI]:
+    """Get or initialize async OpenAI client. Returns None if API key is not configured."""
+    global OPENAI_ASYNC_CLIENT
+    if OPENAI_ASYNC_CLIENT is not None:
+        return OPENAI_ASYNC_CLIENT
+    
+    if not OPENAI_API_KEY:
+        return None
+    
+    try:
+        import openai
+        print(
+            f"[OpenAI] Initializing async client with OpenAI library version: {openai.__version__}",
+            file=sys.stdout,
+            flush=True,
+        )
+        
+        # Initialize async client with explicit api_key only
+        OPENAI_ASYNC_CLIENT = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        print(
+            f"[OpenAI] Async client initialized successfully",
+            file=sys.stdout,
+            flush=True,
+        )
+        return OPENAI_ASYNC_CLIENT
+    except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(
+            f"[OpenAI] Failed to initialize async client: {error_type}: {error_msg}",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            f"[OpenAI] Traceback:\n{traceback.format_exc()}",
+            file=sys.stderr,
+            flush=True,
+        )
+        OPENAI_ASYNC_CLIENT = None
         return None
 
 
@@ -160,6 +249,14 @@ async def notify(action: ActionNotification):
         host_address=action.host_address,
     )
     ACTIONS.append(stored)
+    
+    print(
+        f"[Notify] Stored new action: id={stored.id}, agent_id={stored.agent_id}, "
+        f"action_type={stored.action_type}, status={stored.status}, "
+        f"total_actions_in_store={len(ACTIONS)}",
+        file=sys.stdout,
+        flush=True,
+    )
 
     return {"status": "received", "action_id": stored.id}
 
@@ -168,6 +265,38 @@ async def notify(action: ActionNotification):
 async def health():
     """Simple health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/worker-status")
+async def worker_status():
+    """Diagnostic endpoint to check background worker status."""
+    global BACKGROUND_TASK
+    
+    status_info = {
+        "worker_task_exists": BACKGROUND_TASK is not None,
+        "openai_configured": OPENAI_API_KEY is not None,
+        "openai_sync_client_available": get_openai_client() is not None,
+        "openai_async_client_available": get_openai_async_client() is not None,
+        "total_actions": len(ACTIONS),
+        "new_actions_count": len([a for a in ACTIONS if a.status == "NEW"]),
+        "status_breakdown": {},
+    }
+    
+    if BACKGROUND_TASK:
+        status_info["task_done"] = BACKGROUND_TASK.done()
+        status_info["task_cancelled"] = BACKGROUND_TASK.cancelled()
+        if BACKGROUND_TASK.done():
+            try:
+                status_info["task_exception"] = str(BACKGROUND_TASK.exception())
+            except Exception as e:
+                status_info["task_exception"] = f"Error getting exception: {e}"
+    
+    # Status breakdown
+    for action in ACTIONS:
+        status = action.status
+        status_info["status_breakdown"][status] = status_info["status_breakdown"].get(status, 0) + 1
+    
+    return status_info
 
 
 @app.get("/agents", response_model=PaginatedResponse)
@@ -263,9 +392,22 @@ async def evaluate_action_with_openai(action: StoredAction) -> Dict[str, Any]:
     """
     Evaluate an action using OpenAI to determine intent and risk classification.
     Returns a dictionary with evaluation results.
+    Uses async OpenAI client to avoid blocking the event loop.
     """
-    client = get_openai_client()
+    print(
+        f"[Evaluate OpenAI] Starting evaluation for action {action.id} (agent_id={action.agent_id}, type={action.action_type})",
+        file=sys.stdout,
+        flush=True,
+    )
+    
+    # Use async client to avoid blocking the event loop
+    client = get_openai_async_client()
     if not client:
+        print(
+            f"[Evaluate OpenAI] WARNING: OpenAI async client not available for action {action.id}",
+            file=sys.stderr,
+            flush=True,
+        )
         return {
             "evaluation_by": None,
             "intent": "Evaluation unavailable",
@@ -275,6 +417,11 @@ async def evaluate_action_with_openai(action: StoredAction) -> Dict[str, Any]:
         }
 
     start_time = time.time()
+    print(
+        f"[Evaluate OpenAI] OpenAI async client available, building prompt for action {action.id}...",
+        file=sys.stdout,
+        flush=True,
+    )
 
     # Build context for OpenAI
     action_context = {
@@ -330,7 +477,8 @@ Respond in JSON format with these exact keys:
 """
 
     try:
-        response = client.chat.completions.create(
+        # Use async API call to avoid blocking the event loop
+        response = await client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {
@@ -375,51 +523,209 @@ async def background_evaluation_worker():
     """
     Background worker that continuously polls for NEW actions and evaluates them.
     """
+    poll_count = 0
+    print(
+        f"[Evaluation Worker] Background evaluation worker STARTED at {datetime.now(timezone.utc).isoformat()}",
+        file=sys.stdout,
+        flush=True,
+    )
+    print(
+        f"[Evaluation Worker] OpenAI API key configured: {OPENAI_API_KEY is not None}",
+        file=sys.stdout,
+        flush=True,
+    )
+    print(
+        f"[Evaluation Worker] OpenAI async client available: {get_openai_async_client() is not None}",
+        file=sys.stdout,
+        flush=True,
+    )
+    
+    # Initial heartbeat to confirm worker is running
+    print(
+        f"[Evaluation Worker] Worker heartbeat: Initial poll starting in 1 second...",
+        file=sys.stdout,
+        flush=True,
+    )
+    await asyncio.sleep(1)
+    
     while True:
         try:
+            poll_count += 1
+            total_actions = len(ACTIONS)
+            
             # Find actions with status NEW
             new_actions = [a for a in ACTIONS if a.status == "NEW"]
-
-            for action in new_actions:
-                # Update status to UNDER_EVALUATION
-                action.status = "UNDER_EVALUATION"
-
-                # Perform evaluation
-                eval_result = await evaluate_action_with_openai(action)
-
-                # Update action with evaluation results
-                action.status = "EVALUATED"
-                action.evaluation_by = eval_result.get("evaluation_by")
-                action.intent = eval_result.get("intent")
-                action.risk = eval_result.get("risk")
-                action.evaluation_time_taken = eval_result.get("evaluation_time_taken")
-                action.evaluation_description = eval_result.get("evaluation_description")
-                action.evaluation_timestamp = datetime.now(timezone.utc)
-
+            new_count = len(new_actions)
+            
+            print(
+                f"[Evaluation Worker] Poll #{poll_count}: Total actions={total_actions}, "
+                f"NEW actions found={new_count}",
+                file=sys.stdout,
+                flush=True,
+            )
+            
+            if new_count == 0:
                 print(
-                    f"[Evaluation] Action {action.id} evaluated: Risk={action.risk}, Intent={action.intent}",
+                    f"[Evaluation Worker] No new actions to evaluate, sleeping for 2 seconds...",
                     file=sys.stdout,
                     flush=True,
                 )
+            else:
+                # Log status breakdown for debugging
+                status_breakdown = {}
+                for a in ACTIONS:
+                    status_breakdown[a.status] = status_breakdown.get(a.status, 0) + 1
+                print(
+                    f"[Evaluation Worker] Action status breakdown: {status_breakdown}",
+                    file=sys.stdout,
+                    flush=True,
+                )
+                
+                for idx, action in enumerate(new_actions, 1):
+                    print(
+                        f"[Evaluation Worker] Processing action {idx}/{new_count}: "
+                        f"id={action.id}, agent_id={action.agent_id}, "
+                        f"action_type={action.action_type}, current_status={action.status}",
+                        file=sys.stdout,
+                        flush=True,
+                    )
+                    
+                    # Update status to UNDER_EVALUATION
+                    old_status = action.status
+                    action.status = "UNDER_EVALUATION"
+                    print(
+                        f"[Evaluation Worker] Action {action.id} status changed: "
+                        f"{old_status} -> {action.status}",
+                        file=sys.stdout,
+                        flush=True,
+                    )
+
+                    # Perform evaluation
+                    print(
+                        f"[Evaluation Worker] Starting OpenAI evaluation for action {action.id}...",
+                        file=sys.stdout,
+                        flush=True,
+                    )
+                    eval_result = await evaluate_action_with_openai(action)
+                    print(
+                        f"[Evaluation Worker] OpenAI evaluation completed for action {action.id}: "
+                        f"risk={eval_result.get('risk')}, intent={eval_result.get('intent')}, "
+                        f"time_taken={eval_result.get('evaluation_time_taken')}s",
+                        file=sys.stdout,
+                        flush=True,
+                    )
+
+                    # Update action with evaluation results
+                    action.status = "EVALUATED"
+                    action.evaluation_by = eval_result.get("evaluation_by")
+                    action.intent = eval_result.get("intent")
+                    action.risk = eval_result.get("risk")
+                    action.evaluation_time_taken = eval_result.get("evaluation_time_taken")
+                    action.evaluation_description = eval_result.get("evaluation_description")
+                    action.evaluation_timestamp = datetime.now(timezone.utc)
+
+                    print(
+                        f"[Evaluation Worker] Action {action.id} evaluation complete: "
+                        f"status={action.status}, risk={action.risk}, intent={action.intent}",
+                        file=sys.stdout,
+                        flush=True,
+                    )
 
             # Sleep for 2 seconds before next poll
+            print(
+                f"[Evaluation Worker] Poll #{poll_count} complete, sleeping for 2 seconds...",
+                file=sys.stdout,
+                flush=True,
+            )
             await asyncio.sleep(2)
         except Exception as e:
-            print(f"[Evaluation Worker] Error: {e}", file=sys.stderr, flush=True)
+            error_trace = traceback.format_exc()
+            print(
+                f"[Evaluation Worker] ERROR in poll #{poll_count}: {type(e).__name__}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(
+                f"[Evaluation Worker] Error traceback:\n{error_trace}",
+                file=sys.stderr,
+                flush=True,
+            )
             await asyncio.sleep(5)  # Wait longer on error
 
 
 @app.on_event("startup")
 async def startup_event():
     """Start the background evaluation worker on server startup."""
-    client = get_openai_client()
-    if client:
-        asyncio.create_task(background_evaluation_worker())
-        print("[Startup] Background evaluation worker started", file=sys.stdout, flush=True)
-    else:
+    global BACKGROUND_TASK
+    
+    print(
+        f"[Startup] FastAPI startup event triggered at {datetime.now(timezone.utc).isoformat()}",
+        file=sys.stdout,
+        flush=True,
+    )
+    
+    # Check OpenAI configuration
+    print(
+        f"[Startup] Checking OpenAI configuration...",
+        file=sys.stdout,
+        flush=True,
+    )
+    print(
+        f"[Startup] OPENAI_API_KEY environment variable set: {OPENAI_API_KEY is not None}",
+        file=sys.stdout,
+        flush=True,
+    )
+    
+    # Initialize both sync and async clients
+    sync_client = get_openai_client()
+    async_client = get_openai_async_client()
+    
+    if sync_client and async_client:
         print(
-            "[Startup] OpenAI API key not configured or client initialization failed. Evaluation worker not started.",
+            f"[Startup] OpenAI clients (sync and async) initialized successfully",
             file=sys.stdout,
             flush=True,
         )
+    elif async_client:
+        print(
+            f"[Startup] OpenAI async client initialized successfully (sync client failed)",
+            file=sys.stdout,
+            flush=True,
+        )
+    else:
+        print(
+            "[Startup] WARNING: OpenAI API key not configured or client initialization failed.",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            "[Startup] Worker will still run but evaluations will use default 'UNKNOWN' risk level.",
+            file=sys.stdout,
+            flush=True,
+        )
+    
+    # Always start the worker, even if OpenAI is not configured
+    # The worker will handle missing OpenAI gracefully
+    print(
+        f"[Startup] Creating background evaluation worker task...",
+        file=sys.stdout,
+        flush=True,
+    )
+    # Create and store the task to prevent garbage collection
+    BACKGROUND_TASK = asyncio.create_task(background_evaluation_worker())
+    print(
+        f"[Startup] Background evaluation worker task created: {BACKGROUND_TASK}",
+        file=sys.stdout,
+        flush=True,
+    )
+    print(
+        f"[Startup] Task done status: {BACKGROUND_TASK.done()}, cancelled: {BACKGROUND_TASK.cancelled()}",
+        file=sys.stdout,
+        flush=True,
+    )
+    print(
+        "[Startup] Background evaluation worker started successfully",
+        file=sys.stdout,
+        flush=True,
+    )
 
