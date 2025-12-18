@@ -192,6 +192,8 @@ function ActionsPage() {
                 <tr>
                   <th>ID</th>
                   <th>Agent ID</th>
+                  <th>Process ID</th>
+                  <th>Host Address</th>
                   <th>Action Type</th>
                   <th>Details</th>
                   <th>Status</th>
@@ -204,6 +206,20 @@ function ActionsPage() {
                     <td className="action-id">{action.id}</td>
                     <td className="agent-id-cell">
                       <code>{action.agent_id}</code>
+                    </td>
+                    <td className="process-id">
+                      {action.process_id ? (
+                        <code>{action.process_id}</code>
+                      ) : (
+                        <span className="text-muted">N/A</span>
+                      )}
+                    </td>
+                    <td className="host-address">
+                      {action.host_address ? (
+                        <code>{action.host_address}</code>
+                      ) : (
+                        <span className="text-muted">N/A</span>
+                      )}
                     </td>
                     <td>
                       <span className="action-type-badge">

@@ -1,8 +1,9 @@
 import json
 import os
+import socket
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -30,12 +31,41 @@ def notify_action(
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
+    # Capture process ID and host address
+    process_id: Optional[int] = None
+    host_address: Optional[str] = None
+
+    try:
+        process_id = os.getpid()
+    except Exception:
+        pass  # Ignore if process ID cannot be obtained
+
+    try:
+        # Try to get hostname first, fallback to IP address
+        hostname = socket.gethostname()
+        host_address = socket.gethostbyname(hostname)
+    except Exception:
+        try:
+            # Fallback: try to get local IP address
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            host_address = s.getsockname()[0]
+            s.close()
+        except Exception:
+            pass  # Ignore if host address cannot be obtained
+
     payload: Dict[str, Any] = {
         "agent_id": agent_id,
         "action_type": action_type,
         "action_details": action_details,
         "timestamp": timestamp,
     }
+
+    # Add process_id and host_address if available
+    if process_id is not None:
+        payload["process_id"] = process_id
+    if host_address is not None:
+        payload["host_address"] = host_address
 
     headers = {"Content-Type": "application/json"}
 

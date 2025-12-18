@@ -35,6 +35,8 @@ class ActionNotification(BaseModel):
     action_type: str
     action_details: ActionDetails
     timestamp: datetime
+    process_id: Optional[int] = Field(default=None, description="Process ID of the agent")
+    host_address: Optional[str] = Field(default=None, description="Host address (hostname or IP) of the agent")
 
 
 class StoredAction(BaseModel):
@@ -44,6 +46,8 @@ class StoredAction(BaseModel):
     action_details: ActionDetails
     timestamp: datetime
     status: str = Field(default="NEW", description="Lifecycle status of the action")
+    process_id: Optional[int] = Field(default=None, description="Process ID of the agent")
+    host_address: Optional[str] = Field(default=None, description="Host address (hostname or IP) of the agent")
 
 
 class StoredAgent(BaseModel):
@@ -115,6 +119,8 @@ async def notify(action: ActionNotification):
         action_details=action.action_details,
         timestamp=action.timestamp,
         status="NEW",
+        process_id=action.process_id,
+        host_address=action.host_address,
     )
     ACTIONS.append(stored)
 
