@@ -81,11 +81,31 @@ ACTION_ID_SEQ = 0
 ACTIONS: List[StoredAction] = []
 AGENTS: Dict[str, StoredAgent] = {}
 
-# OpenAI client (initialized if API key is available)
+# OpenAI client (initialized lazily if API key is available)
 OPENAI_CLIENT: Optional[OpenAI] = None
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if OPENAI_API_KEY:
-    OPENAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
+
+
+def get_openai_client() -> Optional[OpenAI]:
+    """Get or initialize OpenAI client. Returns None if API key is not configured."""
+    global OPENAI_CLIENT
+    if OPENAI_CLIENT is not None:
+        return OPENAI_CLIENT
+    
+    if not OPENAI_API_KEY:
+        return None
+    
+    try:
+        OPENAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
+        print("[OpenAI] Client initialized successfully", file=sys.stdout, flush=True)
+        return OPENAI_CLIENT
+    except Exception as e:
+        print(
+            f"[OpenAI] Failed to initialize client: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
 
 
 def _next_action_id() -> int:
@@ -244,13 +264,14 @@ async def evaluate_action_with_openai(action: StoredAction) -> Dict[str, Any]:
     Evaluate an action using OpenAI to determine intent and risk classification.
     Returns a dictionary with evaluation results.
     """
-    if not OPENAI_CLIENT:
+    client = get_openai_client()
+    if not client:
         return {
             "evaluation_by": None,
             "intent": "Evaluation unavailable",
             "risk": "UNKNOWN",
             "evaluation_time_taken": 0.0,
-            "evaluation_description": "OpenAI API key not configured",
+            "evaluation_description": "OpenAI API key not configured or client initialization failed",
         }
 
     start_time = time.time()
@@ -309,7 +330,7 @@ Respond in JSON format with these exact keys:
 """
 
     try:
-        response = OPENAI_CLIENT.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {
@@ -391,12 +412,13 @@ async def background_evaluation_worker():
 @app.on_event("startup")
 async def startup_event():
     """Start the background evaluation worker on server startup."""
-    if OPENAI_CLIENT:
+    client = get_openai_client()
+    if client:
         asyncio.create_task(background_evaluation_worker())
         print("[Startup] Background evaluation worker started", file=sys.stdout, flush=True)
     else:
         print(
-            "[Startup] OpenAI API key not configured. Evaluation worker not started.",
+            "[Startup] OpenAI API key not configured or client initialization failed. Evaluation worker not started.",
             file=sys.stdout,
             flush=True,
         )
