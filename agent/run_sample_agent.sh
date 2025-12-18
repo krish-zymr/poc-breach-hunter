@@ -26,4 +26,9 @@ echo "[Runner] Using DEMO_AGENT_ID=${DEMO_AGENT_ID}"
 echo "[Runner] Running sample agent with Breach Hunter integration..."
 python sample_agent_with_breach_hunter.py
 
+echo "[Runner] Agent run finished. Keeping container alive for inspection (Ctrl+C to stop)..."
+while true; do
+  sleep 3600
+done
+
 
