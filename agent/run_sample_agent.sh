@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env sh
 set -e
 
 # Simple helper script to run the demo agent WITH Breach Hunter integration.
@@ -6,7 +6,8 @@ set -e
 # - Sets a default BREACH_HUNTER_URL if not already configured
 # - Executes the sample CrewAI agent
 
-cd "$(dirname "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 echo "[Runner] Ensuring Python dependencies are installed..."
 if command -v pip >/dev/null 2>&1; then
@@ -16,7 +17,7 @@ else
   exit 1
 fi
 
-export BREACH_HUNTER_URL="${BREACH_HUNTER_URL:-http://localhost:8000/notify}"
+export BREACH_HUNTER_URL="${BREACH_HUNTER_URL:-http://breach-hunter-api:8000/notify}"
 export DEMO_AGENT_ID="${DEMO_AGENT_ID:-demo-agent-001}"
 
 echo "[Runner] Using BREACH_HUNTER_URL=${BREACH_HUNTER_URL}"
