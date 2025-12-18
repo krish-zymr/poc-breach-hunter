@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
@@ -7,6 +8,15 @@ import sys
 
 
 app = FastAPI(title="Breach Hunter", version="0.2.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify exact origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ActionDetails(BaseModel):
@@ -156,12 +166,15 @@ async def list_actions(
     status: Optional[str] = Query(
         default=None, description='Filter by status (e.g. "NEW")'
     ),
+    action_type: Optional[str] = Query(
+        default=None, description="Filter by action_type (e.g. 'command_execution')"
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
     """
     Return a paginated list of actions.
-    Supports filters on agent_id, status, and a simple text search.
+    Supports filters on agent_id, status, action_type, and a simple text search.
     """
     actions = ACTIONS
 
@@ -170,6 +183,9 @@ async def list_actions(
 
     if status:
         actions = [a for a in actions if a.status.lower() == status.lower()]
+
+    if action_type:
+        actions = [a for a in actions if a.action_type.lower() == action_type.lower()]
 
     if q:
         q_lower = q.lower()
