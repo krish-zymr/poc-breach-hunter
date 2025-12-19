@@ -10,6 +10,7 @@ import asyncio
 import time
 import traceback
 from openai import OpenAI, AsyncOpenAI
+from rule_analyzer import AnalysisAggregator
 
 # Module-level log to confirm file is loaded
 print(
@@ -71,6 +72,11 @@ class StoredAction(BaseModel):
     evaluation_time_taken: Optional[float] = Field(default=None, description="Time taken for evaluation in seconds")
     evaluation_description: Optional[str] = Field(default=None, description="Detailed description of the evaluation")
     evaluation_timestamp: Optional[datetime] = Field(default=None, description="When the evaluation was completed")
+    # Static analysis fields
+    decision: Optional[str] = Field(default=None, description="Decision: ALLOW, BLOCK, or UNCERTAIN")
+    enforcement_action: Optional[str] = Field(default=None, description="Enforcement action: NONE, DENY, or REVIEW")
+    risk_score: Optional[int] = Field(default=None, description="Numeric risk score (0-100)")
+    static_findings: Optional[List[Dict[str, Any]]] = Field(default=None, description="Static rule findings")
 
 
 class StoredAgent(BaseModel):
@@ -102,6 +108,12 @@ OPENAI_ASYNC_CLIENT: Optional[AsyncOpenAI] = None
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")  # Custom on-prem URL (optional)
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "openai/gpt-5.2")  # Model name, defaults to openai/gpt-5.2
+
+# Static rule analyzer
+ANALYSIS_AGGREGATOR = AnalysisAggregator(rules_file="rules.json")
+
+# Static rule analyzer
+ANALYSIS_AGGREGATOR = AnalysisAggregator(rules_file="rules.json")
 
 
 def get_openai_client() -> Optional[OpenAI]:
@@ -406,6 +418,53 @@ async def list_actions(
     )
 
 
+async def evaluate_action_static(action: StoredAction) -> Dict[str, Any]:
+    """
+    Perform static rule-based analysis on an action.
+    Returns evaluation results without LLM call.
+    """
+    start_time = time.time()
+    
+    # Run static analysis
+    action_details_dict = action.action_details.model_dump() if hasattr(action.action_details, 'model_dump') else {
+        "command": action.action_details.command,
+        "file_path": action.action_details.file_path,
+        "method": action.action_details.method,
+        "url": action.action_details.url,
+        "headers": action.action_details.headers,
+        "body": action.action_details.body,
+    }
+    
+    analysis_result = ANALYSIS_AGGREGATOR.aggregate(action.action_type, action_details_dict)
+    time_taken = time.time() - start_time
+    
+    # Convert findings to dict
+    findings_dict = [
+        {
+            "rule_id": f.rule_id,
+            "rule_name": f.rule_name,
+            "severity": f.severity,
+            "category": f.category,
+            "risk_score": f.risk_score,
+            "description": f.description,
+        }
+        for f in analysis_result.findings
+    ]
+    
+    return {
+        "evaluation_by": "Rule based analysis",
+        "intent": analysis_result.intent,
+        "risk": analysis_result.risk_level,
+        "evaluation_time_taken": round(time_taken, 2),
+        "evaluation_description": analysis_result.description,
+        "decision": analysis_result.decision,
+        "enforcement_action": analysis_result.enforcement_action,
+        "risk_score": analysis_result.risk_score,
+        "static_findings": findings_dict,
+        "should_use_llm": analysis_result.should_use_llm,
+    }
+
+
 async def evaluate_action_with_openai(action: StoredAction) -> Dict[str, Any]:
     """
     Evaluate an action using OpenAI to determine intent and risk classification.
@@ -618,20 +677,80 @@ async def background_evaluation_worker():
                         flush=True,
                     )
 
-                    # Perform evaluation
+                    # Perform static analysis first
                     print(
-                        f"[Evaluation Worker] Starting OpenAI evaluation for action {action.id}...",
+                        f"[Evaluation Worker] Starting static rule analysis for action {action.id}...",
                         file=sys.stdout,
                         flush=True,
                     )
-                    eval_result = await evaluate_action_with_openai(action)
+                    static_result = await evaluate_action_static(action)
                     print(
-                        f"[Evaluation Worker] OpenAI evaluation completed for action {action.id}: "
-                        f"risk={eval_result.get('risk')}, intent={eval_result.get('intent')}, "
-                        f"time_taken={eval_result.get('evaluation_time_taken')}s",
+                        f"[Evaluation Worker] Static analysis completed for action {action.id}: "
+                        f"decision={static_result.get('decision')}, risk={static_result.get('risk')}, "
+                        f"risk_score={static_result.get('risk_score')}, should_use_llm={static_result.get('should_use_llm')}",
                         file=sys.stdout,
                         flush=True,
                     )
+                    
+                    # Determine if we should use LLM
+                    should_use_llm = static_result.get("should_use_llm", True)
+                    decision = static_result.get("decision", "ALLOW")
+                    enforcement_action = static_result.get("enforcement_action", "NONE")
+                    risk = static_result.get("risk", "UNKNOWN")
+                    
+                    # CRITICAL/BLOCK decisions or ALLOW from soft rules should NEVER use LLM
+                    # Soft rules return ALLOW with should_use_llm=False, so we respect that
+                    if decision == "BLOCK" or risk == "CRITICAL" or static_result.get("risk_score", 0) >= 80:
+                        should_use_llm = False
+                        print(
+                            f"[Evaluation Worker] FORCING should_use_llm=False for action {action.id} "
+                            f"(decision={decision}, risk={risk}, risk_score={static_result.get('risk_score', 0)})",
+                            file=sys.stdout,
+                            flush=True,
+                        )
+                    # If decision is ALLOW and should_use_llm is False, it's from a soft rule
+                    elif decision == "ALLOW" and not should_use_llm:
+                        print(
+                            f"[Evaluation Worker] Safe operation detected (soft rule) for action {action.id} "
+                            f"- skipping LLM evaluation.",
+                            file=sys.stdout,
+                            flush=True,
+                        )
+                    
+                    eval_result = static_result
+                    
+                    if should_use_llm:
+                        print(
+                            f"[Evaluation Worker] Proceeding with OpenAI evaluation for action {action.id}...",
+                            file=sys.stdout,
+                            flush=True,
+                        )
+                        llm_result = await evaluate_action_with_openai(action)
+                        # Merge LLM results with static results (LLM takes precedence for intent/description)
+                        eval_result = {
+                            **static_result,
+                            "evaluation_by": "Full analysis by LLM",
+                            "intent": llm_result.get("intent", static_result.get("intent")),
+                            "risk": llm_result.get("risk", static_result.get("risk")),
+                            "evaluation_time_taken": static_result.get("evaluation_time_taken", 0.0) + llm_result.get("evaluation_time_taken", 0.0),
+                            "evaluation_description": llm_result.get("evaluation_description", static_result.get("evaluation_description")),
+                        }
+                        print(
+                            f"[Evaluation Worker] OpenAI evaluation completed for action {action.id}: "
+                            f"risk={eval_result.get('risk')}, intent={eval_result.get('intent')}",
+                            file=sys.stdout,
+                            flush=True,
+                        )
+                    else:
+                        # Ensure evaluation_by is set correctly for rule-based analysis
+                        eval_result["evaluation_by"] = "Rule based analysis"
+                        print(
+                            f"[Evaluation Worker] Skipping OpenAI evaluation for action {action.id} "
+                            f"(decision={decision}, enforcement={enforcement_action}, risk={risk}). "
+                            f"Using rule-based analysis only.",
+                            file=sys.stdout,
+                            flush=True,
+                        )
 
                     # Update action with evaluation results
                     action.status = "EVALUATED"
@@ -641,6 +760,10 @@ async def background_evaluation_worker():
                     action.evaluation_time_taken = eval_result.get("evaluation_time_taken")
                     action.evaluation_description = eval_result.get("evaluation_description")
                     action.evaluation_timestamp = datetime.now(timezone.utc)
+                    action.decision = eval_result.get("decision")
+                    action.enforcement_action = eval_result.get("enforcement_action")
+                    action.risk_score = eval_result.get("risk_score")
+                    action.static_findings = eval_result.get("static_findings")
 
                     print(
                         f"[Evaluation Worker] Action {action.id} evaluation complete: "

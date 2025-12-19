@@ -9,6 +9,8 @@ COPY server/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY server/app.py /app/app.py
+COPY server/rule_analyzer.py /app/rule_analyzer.py
+COPY server/rules.json /app/rules.json
 COPY breach_hunter_client.py /app/breach_hunter_client.py
 COPY README.md /app/README.md
 

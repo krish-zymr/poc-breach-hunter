@@ -1,0 +1,207 @@
+{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "sensitive_os_write",
+      "name": "Sensitive OS File Write",
+      "severity": "CRITICAL",
+      "category": "SYSTEM_TAMPERING",
+      "enabled": true,
+      "conditions": {
+        "action_type": "file_operation",
+        "command": ["write", "append", "overwrite"],
+        "path_patterns": [
+          "/etc/*",
+          "/bin/*",
+          "/sbin/*",
+          "/usr/bin/*",
+          "/usr/sbin/*",
+          "/lib/*",
+          "/var/lib/*",
+          "/root/*",
+          "/boot/*"
+        ],
+        "exact_paths": [
+          "/etc/passwd",
+          "/etc/shadow",
+          "/etc/sudoers",
+          "/root/.ssh/authorized_keys"
+        ]
+      },
+      "risk_score": {
+        "min": 60,
+        "max": 90
+      }
+    },
+    {
+      "id": "credential_secret_access",
+      "name": "Credential/Secret Access",
+      "severity": "CRITICAL",
+      "category": "CREDENTIAL_ACCESS",
+      "enabled": true,
+      "conditions": {
+        "action_type": "file_operation",
+        "path_patterns": [
+          "~/.ssh/*",
+          "/root/.ssh/*",
+          "*.pem",
+          "*.key",
+          "~/.aws/credentials",
+          "~/.config/gcloud/*",
+          "/var/run/secrets/*"
+        ]
+      },
+      "risk_score": {
+        "min": 50,
+        "max": 85
+      }
+    },
+    {
+      "id": "permission_change",
+      "name": "Permission Change on Sensitive Paths",
+      "severity": "HIGH",
+      "category": "PRIVILEGE_CHANGE",
+      "enabled": true,
+      "conditions": {
+        "action_type": "command_execution",
+        "command_patterns": ["chmod", "chown", "setfacl"],
+        "path_patterns": [
+          "/etc/*",
+          "/bin/*",
+          "/sbin/*",
+          "/usr/bin/*",
+          "/usr/sbin/*",
+          "/root/*"
+        ]
+      },
+      "risk_score": {
+        "min": 40,
+        "max": 70
+      }
+    },
+    {
+      "id": "path_traversal",
+      "name": "Path Traversal Attempt",
+      "severity": "HIGH",
+      "category": "SYSTEM_TAMPERING",
+      "enabled": true,
+      "conditions": {
+        "path_contains": ["../", "..\\"]
+      },
+      "risk_score": {
+        "min": 25,
+        "max": 60
+      }
+    },
+    {
+      "id": "unknown_file_operation",
+      "name": "Unknown File Operation Command",
+      "severity": "MEDIUM",
+      "category": "UNKNOWN_OPERATION",
+      "enabled": true,
+      "conditions": {
+        "action_type": "file_operation",
+        "command_not_in": ["read", "write", "append", "overwrite", "delete", "list"]
+      },
+      "risk_score": {
+        "min": 10,
+        "max": 30
+      }
+    },
+    {
+      "id": "safe_tmp_operations",
+      "name": "Safe Temporary Directory Operations",
+      "severity": "LOW",
+      "category": "SAFE_OPERATION",
+      "rule_type": "soft",
+      "enabled": true,
+      "conditions": {
+        "action_type": "file_operation",
+        "command": ["read", "write", "append", "overwrite", "delete", "list"],
+        "path_patterns": [
+          "/tmp/*",
+          "/var/tmp/*",
+          "/tmp/**"
+        ]
+      },
+      "risk_score": {
+        "min": 0,
+        "max": 5
+      }
+    },
+    {
+      "id": "safe_user_home_operations",
+      "name": "Safe User Home Directory Operations",
+      "severity": "LOW",
+      "category": "SAFE_OPERATION",
+      "rule_type": "soft",
+      "enabled": true,
+      "conditions": {
+        "action_type": "file_operation",
+        "command": ["read", "write", "append", "overwrite", "delete", "list"],
+        "path_patterns": [
+          "~/Downloads/*",
+          "~/Documents/*",
+          "~/Desktop/*",
+          "~/tmp/*",
+          "~/temp/*"
+        ]
+      },
+      "risk_score": {
+        "min": 0,
+        "max": 5
+      }
+    },
+    {
+      "id": "safe_public_api_calls",
+      "name": "Safe Public API Calls",
+      "severity": "LOW",
+      "category": "SAFE_OPERATION",
+      "rule_type": "soft",
+      "enabled": true,
+      "conditions": {
+        "action_type": "api_call",
+        "method": ["GET", "POST"],
+        "url_patterns": [
+          "https://httpbin.org/*",
+          "https://api.github.com/*",
+          "https://jsonplaceholder.typicode.com/*"
+        ]
+      },
+      "risk_score": {
+        "min": 0,
+        "max": 5
+      }
+    },
+    {
+      "id": "safe_readonly_operations",
+      "name": "Safe Read-Only File Operations",
+      "severity": "LOW",
+      "category": "SAFE_OPERATION",
+      "rule_type": "soft",
+      "enabled": true,
+      "conditions": {
+        "action_type": "file_operation",
+        "command": ["read", "list"],
+        "path_patterns": [
+          "/usr/share/*",
+          "/usr/local/share/*",
+          "/opt/*"
+        ]
+      },
+      "risk_score": {
+        "min": 0,
+        "max": 5
+      }
+    }
+  ],
+  "decision_policy": {
+    "block_critical": true,
+    "block_risk_threshold": 80,
+    "allow_safe_operations": true,
+    "uncertain_on_missing_fields": true,
+    "uncertain_on_no_rule_match": true
+  },
+  "allowed_file_operations": ["read", "write", "append", "overwrite", "delete", "list"]
+}
+
