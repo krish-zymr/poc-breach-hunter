@@ -15,7 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy project files first (needed for package installation)
 COPY pyproject.toml ./
 COPY src/ ./src/
-COPY README.md ./
 
 # Copy Ollama startup script (needed before we install Ollama)
 RUN mkdir -p /app/docker
