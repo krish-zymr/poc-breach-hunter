@@ -6,12 +6,16 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+    depends_on:
+      - breach-hunter-analysis-engine
     ports:
       - "8000:8000"
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
-      - OPENAI_MODEL=openai/gpt-5.2
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-openai/gpt-5.2}
+      - SLM_ANALYSIS_ENGINE_URL=http://breach-hunter-analysis-engine:7000
+
   breach-hunter-agent:
     container_name: breach-hunter-agent
     build:
@@ -28,8 +32,23 @@ services:
     build:
       context: .
       dockerfile: client/Dockerfile
+    depends_on:
+      - breach-hunter-server
     ports:
       - "8080:80"
 
-
-
+  breach-hunter-analysis-engine:
+    container_name: breach-hunter-analysis-engine
+    build:
+      context: ./slm-analysis-engine
+      dockerfile: Dockerfile
+    ports:
+      - "7001:7000"
+    environment:
+      - PORT=7000
+      - HOST=0.0.0.0
+      - AEGIS_SLM_BACKEND=${AEGIS_SLM_BACKEND:-auto}
+      - AEGIS_OLLAMA_MODEL=${AEGIS_OLLAMA_MODEL:-llama3.2:1b}
+      - AEGIS_USE_SLM=${AEGIS_USE_SLM:-1}
+      - AEGIS_USE_ML=${AEGIS_USE_ML:-1}
+      - AEGIS_TRANSFORMERS_MODEL=${AEGIS_TRANSFORMERS_MODEL:-distilbert-base-uncased}
