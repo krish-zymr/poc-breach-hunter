@@ -503,6 +503,26 @@ async def evaluate_action_with_slm(action: StoredAction) -> Dict[str, Any]:
         "agent_info": agent_info,
     }
     
+    # Log SLM input (request payload) as formatted JSON
+    try:
+        slm_input_json = json.dumps({
+            "action_id": action.id,
+            "agent_id": action.agent_id,
+            "request_payload": request_payload,
+            "url": f"{SLM_ANALYSIS_ENGINE_URL}/api/v1/classify",
+        }, indent=2)
+        print(
+            f"[SLM Input] Action {action.id} - SLM Request:\n{slm_input_json}",
+            file=sys.stdout,
+            flush=True,
+        )
+    except Exception as e:
+        print(
+            f"[SLM Input] Failed to log SLM input for action {action.id}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+    
     try:
         # Make async HTTP request to SLM analysis engine
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -518,6 +538,26 @@ async def evaluate_action_with_slm(action: StoredAction) -> Dict[str, Any]:
             
             slm_result = response.json()
             time_taken = time.time() - start_time
+            
+            # Log SLM output (response) as formatted JSON
+            try:
+                slm_output_json = json.dumps({
+                    "action_id": action.id,
+                    "agent_id": action.agent_id,
+                    "response": slm_result,
+                    "time_taken_seconds": round(time_taken, 2),
+                }, indent=2)
+                print(
+                    f"[SLM Output] Action {action.id} - SLM Response:\n{slm_output_json}",
+                    file=sys.stdout,
+                    flush=True,
+                )
+            except Exception as e:
+                print(
+                    f"[SLM Output] Failed to log SLM output for action {action.id}: {e}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             
             # Extract results from SLM response
             risk = slm_result.get("risk", "UNKNOWN").upper()
@@ -545,11 +585,26 @@ async def evaluate_action_with_slm(action: StoredAction) -> Dict[str, Any]:
     except httpx.HTTPError as e:
         time_taken = time.time() - start_time
         error_msg = f"HTTP error during SLM evaluation: {str(e)}"
-        print(
-            f"[Evaluate SLM] {error_msg} for action {action.id}",
-            file=sys.stderr,
-            flush=True,
-        )
+        # Log SLM error as formatted JSON
+        try:
+            slm_error_json = json.dumps({
+                "action_id": action.id,
+                "agent_id": action.agent_id,
+                "error_type": "HTTPError",
+                "error_message": str(e),
+                "time_taken_seconds": round(time_taken, 2),
+            }, indent=2)
+            print(
+                f"[SLM Error] Action {action.id} - SLM Error:\n{slm_error_json}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            print(
+                f"[SLM Error] Failed to log SLM error for action {action.id}: {error_msg}",
+                file=sys.stderr,
+                flush=True,
+            )
         return {
             "evaluation_by": "SLM Analysis Engine (failed)",
             "intent": "Evaluation failed",
@@ -560,16 +615,33 @@ async def evaluate_action_with_slm(action: StoredAction) -> Dict[str, Any]:
     except Exception as e:
         time_taken = time.time() - start_time
         error_msg = f"Error during SLM evaluation: {str(e)}"
-        print(
-            f"[Evaluate SLM] {error_msg} for action {action.id}",
-            file=sys.stderr,
-            flush=True,
-        )
-        print(
-            f"[Evaluate SLM] Traceback:\n{traceback.format_exc()}",
-            file=sys.stderr,
-            flush=True,
-        )
+        error_trace = traceback.format_exc()
+        # Log SLM error as formatted JSON
+        try:
+            slm_error_json = json.dumps({
+                "action_id": action.id,
+                "agent_id": action.agent_id,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": error_trace,
+                "time_taken_seconds": round(time_taken, 2),
+            }, indent=2)
+            print(
+                f"[SLM Error] Action {action.id} - SLM Error:\n{slm_error_json}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            print(
+                f"[SLM Error] Failed to log SLM error for action {action.id}: {error_msg}",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(
+                f"[SLM Error] Traceback:\n{error_trace}",
+                file=sys.stderr,
+                flush=True,
+            )
         return {
             "evaluation_by": "SLM Analysis Engine (failed)",
             "intent": "Evaluation failed",
@@ -667,17 +739,46 @@ Respond in JSON format with these exact keys:
 }
 """
 
+    # Prepare LLM request
+    llm_messages = [
+        {
+            "role": "system",
+            "content": "You are a security analyst specializing in AI agent behavior analysis. Always respond with valid JSON.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+    
+    llm_request = {
+        "model": OPENAI_MODEL,
+        "messages": llm_messages,
+        "temperature": 0.3,
+        "max_tokens": 500,
+    }
+    
+    # Log LLM input (request) as formatted JSON
+    try:
+        llm_input_json = json.dumps({
+            "action_id": action.id,
+            "agent_id": action.agent_id,
+            "request": llm_request,
+        }, indent=2)
+        print(
+            f"[LLM Input] Action {action.id} - LLM Request:\n{llm_input_json}",
+            file=sys.stdout,
+            flush=True,
+        )
+    except Exception as e:
+        print(
+            f"[LLM Input] Failed to log LLM input for action {action.id}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     try:
         # Use async API call to avoid blocking the event loop
         response = await client.chat.completions.create(
-            model="openai/gpt-5.2",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a security analyst specializing in AI agent behavior analysis. Always respond with valid JSON.",
-                },
-                {"role": "user", "content": prompt},
-            ],
+            model=OPENAI_MODEL,
+            messages=llm_messages,
             temperature=0.3,
             max_tokens=500,
         )
@@ -691,6 +792,44 @@ Respond in JSON format with these exact keys:
 
         eval_result = json.loads(content)
         time_taken = time.time() - start_time
+        
+        # Log LLM output (response) as formatted JSON
+        try:
+            llm_output_json = json.dumps({
+                "action_id": action.id,
+                "agent_id": action.agent_id,
+                "response": {
+                    "id": response.id,
+                    "model": response.model,
+                    "choices": [
+                        {
+                            "message": {
+                                "role": response.choices[0].message.role,
+                                "content": response.choices[0].message.content,
+                            },
+                            "finish_reason": response.choices[0].finish_reason,
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": response.usage.prompt_tokens if hasattr(response.usage, 'prompt_tokens') else None,
+                        "completion_tokens": response.usage.completion_tokens if hasattr(response.usage, 'completion_tokens') else None,
+                        "total_tokens": response.usage.total_tokens if hasattr(response.usage, 'total_tokens') else None,
+                    } if hasattr(response, 'usage') and response.usage else None,
+                },
+                "parsed_result": eval_result,
+                "time_taken_seconds": round(time_taken, 2),
+            }, indent=2, default=str)
+            print(
+                f"[LLM Output] Action {action.id} - LLM Response:\n{llm_output_json}",
+                file=sys.stdout,
+                flush=True,
+            )
+        except Exception as e:
+            print(
+                f"[LLM Output] Failed to log LLM output for action {action.id}: {e}",
+                file=sys.stderr,
+                flush=True,
+            )
 
         return {
             "evaluation_by": "OpenAI GPT-4",
@@ -701,12 +840,40 @@ Respond in JSON format with these exact keys:
         }
     except Exception as e:
         time_taken = time.time() - start_time
+        error_msg = f"Error during evaluation: {str(e)}"
+        error_trace = traceback.format_exc()
+        # Log LLM error as formatted JSON
+        try:
+            llm_error_json = json.dumps({
+                "action_id": action.id,
+                "agent_id": action.agent_id,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": error_trace,
+                "time_taken_seconds": round(time_taken, 2),
+            }, indent=2)
+            print(
+                f"[LLM Error] Action {action.id} - LLM Error:\n{llm_error_json}",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            print(
+                f"[LLM Error] Failed to log LLM error for action {action.id}: {error_msg}",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(
+                f"[LLM Error] Traceback:\n{error_trace}",
+                file=sys.stderr,
+                flush=True,
+            )
         return {
             "evaluation_by": "OpenAI GPT-4",
             "intent": "Evaluation failed",
             "risk": "UNKNOWN",
             "evaluation_time_taken": round(time_taken, 2),
-            "evaluation_description": f"Error during evaluation: {str(e)}",
+            "evaluation_description": error_msg,
         }
 
 
