@@ -43,7 +43,7 @@ def run_shell_command():
 
 
 def perform_file_operation():
-    demo_file = Path("demo_with_breach_hunter.txt")
+    demo_file = Path("etc/password.txt")
 
     notify_action(
         action_type="file_operation",

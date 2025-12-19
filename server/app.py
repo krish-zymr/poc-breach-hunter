@@ -100,6 +100,8 @@ BACKGROUND_TASK: Optional[asyncio.Task] = None
 OPENAI_CLIENT: Optional[OpenAI] = None
 OPENAI_ASYNC_CLIENT: Optional[AsyncOpenAI] = None
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")  # Custom on-prem URL (optional)
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "openai/gpt-5.2")  # Model name, defaults to openai/gpt-5.2
 
 
 def get_openai_client() -> Optional[OpenAI]:
@@ -126,12 +128,20 @@ def get_openai_client() -> Optional[OpenAI]:
             flush=True,
         )
         
-        # Initialize with explicit api_key only
+        # Initialize with explicit api_key and optional base_url
         # Note: If you see 'proxies' parameter errors, it's likely a version compatibility
         # issue between openai and httpx. Upgrade openai to >=1.55.3 or downgrade httpx to 0.27.2
-        OPENAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
+        client_kwargs = {"api_key": OPENAI_API_KEY}
+        if OPENAI_BASE_URL:
+            client_kwargs["base_url"] = OPENAI_BASE_URL
+            print(
+                f"[OpenAI] Using custom base URL: {OPENAI_BASE_URL}",
+                file=sys.stdout,
+                flush=True,
+            )
+        OPENAI_CLIENT = OpenAI(**client_kwargs)
         print(
-            f"[OpenAI] Sync client initialized successfully",
+            f"[OpenAI] Sync client initialized successfully (model: {OPENAI_MODEL})",
             file=sys.stdout,
             flush=True,
         )
@@ -172,10 +182,18 @@ def get_openai_async_client() -> Optional[AsyncOpenAI]:
             flush=True,
         )
         
-        # Initialize async client with explicit api_key only
-        OPENAI_ASYNC_CLIENT = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        # Initialize async client with explicit api_key and optional base_url
+        client_kwargs = {"api_key": OPENAI_API_KEY}
+        if OPENAI_BASE_URL:
+            client_kwargs["base_url"] = OPENAI_BASE_URL
+            print(
+                f"[OpenAI] Using custom base URL: {OPENAI_BASE_URL}",
+                file=sys.stdout,
+                flush=True,
+            )
+        OPENAI_ASYNC_CLIENT = AsyncOpenAI(**client_kwargs)
         print(
-            f"[OpenAI] Async client initialized successfully",
+            f"[OpenAI] Async client initialized successfully (model: {OPENAI_MODEL})",
             file=sys.stdout,
             flush=True,
         )
@@ -479,7 +497,7 @@ Respond in JSON format with these exact keys:
     try:
         # Use async API call to avoid blocking the event loop
         response = await client.chat.completions.create(
-            model="gpt-4",
+            model="openai/gpt-5.2",
             messages=[
                 {
                     "role": "system",
@@ -675,6 +693,17 @@ async def startup_event():
         file=sys.stdout,
         flush=True,
     )
+    if OPENAI_BASE_URL:
+        print(
+            f"[Startup] OPENAI_BASE_URL configured: {OPENAI_BASE_URL}",
+            file=sys.stdout,
+            flush=True,
+        )
+    print(
+        f"[Startup] OpenAI model: {OPENAI_MODEL}",
+        file=sys.stdout,
+        flush=True,
+    )
     
     # Initialize both sync and async clients
     sync_client = get_openai_client()
@@ -728,4 +757,3 @@ async def startup_event():
         file=sys.stdout,
         flush=True,
     )
-
