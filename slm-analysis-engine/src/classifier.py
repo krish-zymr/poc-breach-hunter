@@ -4,14 +4,14 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-from .intent_types import EventDict, IntentResult, normalize_event, RiskLevel
-from .logger import LOGGER
-from .ml_based import MLIntentModel
-from .risk_scorer import RiskScorer
+from intent_types import EventDict, IntentResult, normalize_event, RiskLevel
+from logger import LOGGER
+from ml_based import MLIntentModel
+from risk_scorer import RiskScorer
 
-# Try to import SLM classifier (optional)
+    # Try to import SLM classifier (optional)
 try:
-    from .slm_based import SLMIntentClassifier
+    from slm_based import SLMIntentClassifier
     SLM_AVAILABLE = True
 except ImportError:
     SLM_AVAILABLE = False
@@ -43,9 +43,9 @@ class AnalysisEngine:
         # Initialize SLM if requested and available
         if use_slm and SLM_AVAILABLE and SLMIntentClassifier:
             try:
-                slm_backend = os.getenv("AEGIS_SLM_BACKEND", "auto")
+                slm_backend = os.getenv("BREACH_HUNTER_SLM_BACKEND", "auto")
                 # Warmup enabled by default (recommended for production)
-                warmup_enabled = os.getenv("AEGIS_SLM_WARMUP", "1").lower() in ('1', 'true', 'yes', 'on')
+                warmup_enabled = os.getenv("BREACH_HUNTER_SLM_WARMUP", "1").lower() in ('1', 'true', 'yes', 'on')
                 self.slm_model = SLMIntentClassifier(backend=slm_backend, warmup=warmup_enabled)
                 self.ml_model = None  # SLM replaces ML
                 LOGGER.info("Analysis Engine initialized with SLM (backend: %s, warmup: %s)", slm_backend, warmup_enabled)
@@ -85,7 +85,7 @@ class AnalysisEngine:
             result = self.ml_model.classify(event)
         else:
             # Fallback: simple risk assessment
-            from .intent_types import ActionType, IntentType, RiskLevel
+            from intent_types import ActionType, IntentType, RiskLevel
 
             # Infer action type
             action_type = ActionType.UNKNOWN

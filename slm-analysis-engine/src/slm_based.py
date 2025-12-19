@@ -8,9 +8,9 @@ import torch.nn.functional as F
 import os
 from typing import Dict, Optional
 
-from .logger import LOGGER
-from .intent_types import ActionType, EventDict, IntentResult, IntentType, RiskLevel
-from .risk_scorer import RiskScorer
+from logger import LOGGER
+from intent_types import ActionType, EventDict, IntentResult, IntentType, RiskLevel
+from risk_scorer import RiskScorer
 
 
 class SLMIntentClassifier:
@@ -145,8 +145,8 @@ class SLMIntentClassifier:
             Local model directory path if snapshot exists, None otherwise.
         """
         try:
-            model_name = os.getenv("AEGIS_TRANSFORMERS_MODEL", "distilbert-base-uncased")
-            models_dir = os.getenv("AEGIS_MODELS_DIR", "/opt/models")
+            model_name = os.getenv("BREACH_HUNTER_TRANSFORMERS_MODEL", "distilbert-base-uncased")
+            models_dir = os.getenv("BREACH_HUNTER_MODELS_DIR", "/opt/models")
             # Convert model name to directory name (e.g., "distilbert-base-uncased" -> "distilbert-base-uncased")
             local_model_dir = os.path.join(models_dir, model_name.replace("/", "_"))
             
@@ -172,7 +172,7 @@ class SLMIntentClassifier:
             from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
             
             # Use a small, fast model for classification
-            model_name = os.getenv("AEGIS_TRANSFORMERS_MODEL", os.getenv("AEGIS_SLM_MODEL", "distilbert-base-uncased"))
+            model_name = os.getenv("BREACH_HUNTER_TRANSFORMERS_MODEL", os.getenv("BREACH_HUNTER_SLM_MODEL", "distilbert-base-uncased"))
             
             # Try to use local snapshot first (zero network activity)
             local_model_path = self._get_model_path()
@@ -292,7 +292,7 @@ Return JSON using this schema (STRICT JSON only):
             Classification result dictionary or None if failed.
         """
         try:
-            model = os.getenv("AEGIS_OLLAMA_MODEL", "llama3.2:1b")  # Small model
+            model = os.getenv("BREACH_HUNTER_OLLAMA_MODEL", "llama3.2:1b")  # Small model
             
             response = self.ollama_client.post(
                 "http://localhost:11434/api/generate",

@@ -59,8 +59,8 @@ echo ""
 # ---------------------------------------------------------------------------
 # Verify Transformers model snapshot (downloaded during build)
 # ---------------------------------------------------------------------------
-TRANSFORMERS_MODEL="${AEGIS_TRANSFORMERS_MODEL:-distilbert-base-uncased}"
-MODELS_DIR="${AEGIS_MODELS_DIR:-/opt/models}"
+TRANSFORMERS_MODEL="${BREACH_HUNTER_TRANSFORMERS_MODEL:-distilbert-base-uncased}"
+MODELS_DIR="${BREACH_HUNTER_MODELS_DIR:-/opt/models}"
 LOCAL_MODEL_DIR="${MODELS_DIR}/${TRANSFORMERS_MODEL//\//_}"
 
 if [ -f "${LOCAL_MODEL_DIR}/config.json" ]; then

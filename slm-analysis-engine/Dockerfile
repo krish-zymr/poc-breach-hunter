@@ -1,4 +1,4 @@
-# AEGIS Analysis Engine Docker Image
+# Breach Hunter Analysis Engine Docker Image
 # This image provides LLM-based intent classification and risk scoring services
 FROM python:3.11-slim
 
@@ -73,10 +73,10 @@ RUN mkdir -p /opt/models && \
 
 # Set default environment variables
 ENV PYTHONPATH=/app/src
-ENV AEGIS_SLM_BACKEND=auto
-ENV AEGIS_OLLAMA_MODEL=llama3.2:1b
-ENV AEGIS_USE_SLM=1
-ENV AEGIS_USE_ML=1
+ENV BREACH_HUNTER_SLM_BACKEND=auto
+ENV BREACH_HUNTER_OLLAMA_MODEL=llama3.2:1b
+ENV BREACH_HUNTER_USE_SLM=1
+ENV BREACH_HUNTER_USE_ML=1
 
 # Persistent cache for Transformers models (VERY IMPORTANT - prevents re-download on restart)
 # Using HF_HOME (recommended) - TRANSFORMERS_CACHE is deprecated in v5
@@ -87,8 +87,8 @@ ENV HF_HUB_DISABLE_PROGRESS_BARS=1
 RUN mkdir -p /opt/hf_cache && chmod 777 /opt/hf_cache
 
 # Model configuration
-ENV AEGIS_TRANSFORMERS_MODEL=distilbert-base-uncased
-ENV AEGIS_MODELS_DIR=/opt/models
+ENV BREACH_HUNTER_TRANSFORMERS_MODEL=distilbert-base-uncased
+ENV BREACH_HUNTER_MODELS_DIR=/opt/models
 
 # API server configuration
 ENV PORT=7000
@@ -98,4 +98,4 @@ ENV HOST=0.0.0.0
 EXPOSE 7000
 
 # Default command: start the API server
-CMD ["python3", "-m", "aegis_analysis_engine.server"]
+CMD ["python3", "-m", "server"]

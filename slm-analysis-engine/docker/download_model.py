@@ -5,8 +5,8 @@ import os
 import sys
 
 def main():
-    model_id = os.getenv('AEGIS_TRANSFORMERS_MODEL', 'distilbert-base-uncased')
-    models_dir = os.getenv('AEGIS_MODELS_DIR', '/opt/models')
+    model_id = os.getenv('BREACH_HUNTER_TRANSFORMERS_MODEL', 'distilbert-base-uncased')
+    models_dir = os.getenv('BREACH_HUNTER_MODELS_DIR', '/opt/models')
     local_dir = os.path.join(models_dir, model_id.replace('/', '_'))
     
     print(f'📥 Downloading model snapshot: {model_id} -> {local_dir}')

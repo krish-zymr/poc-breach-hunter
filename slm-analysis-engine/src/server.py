@@ -1,4 +1,4 @@
-"""FastAPI server for AEGIS Analysis Engine."""
+"""FastAPI server for Breach Hunter Analysis Engine."""
 from __future__ import annotations
 
 import os
@@ -8,12 +8,12 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .classifier import AnalysisEngine
-from .intent_types import normalize_event
-from .logger import LOGGER
+from classifier import AnalysisEngine
+from intent_types import normalize_event
+from logger import LOGGER
 
 app = FastAPI(
-    title="AEGIS Analysis Engine",
+    title="Breach Hunter Analysis Engine",
     description="LLM-based intent classification and risk scoring service",
     version="0.1.0",
 )
@@ -49,8 +49,8 @@ def get_engine() -> AnalysisEngine:
     """Get or create the analysis engine instance."""
     global _engine
     if _engine is None:
-        use_slm = os.getenv("AEGIS_USE_SLM", "1").lower() in ("1", "true", "yes", "on")
-        use_ml = os.getenv("AEGIS_USE_ML", "1").lower() in ("1", "true", "yes", "on")
+        use_slm = os.getenv("BREACH_HUNTER_USE_SLM", "1").lower() in ("1", "true", "yes", "on")
+        use_ml = os.getenv("BREACH_HUNTER_USE_ML", "1").lower() in ("1", "true", "yes", "on")
         _engine = AnalysisEngine(use_ml=use_ml, use_slm=use_slm)
         LOGGER.info("Analysis Engine initialized (ML: %s, SLM: %s)", use_ml, use_slm)
     return _engine
@@ -60,7 +60,7 @@ def get_engine() -> AnalysisEngine:
 async def root():
     """Root endpoint."""
     return {
-        "service": "AEGIS Analysis Engine",
+        "service": "Breach Hunter Analysis Engine",
         "version": "0.1.0",
         "status": "running",
     }
@@ -116,8 +116,8 @@ def main():
     port = int(os.getenv("PORT", "8000"))
     host = os.getenv("HOST", "0.0.0.0")
 
-    LOGGER.info("Starting AEGIS Analysis Engine on %s:%d", host, port)
-    uvicorn.run("aegis_analysis_engine.server:app", host=host, port=port, log_level="info")
+    LOGGER.info("Starting Breach Hunter Analysis Engine on %s:%d", host, port)
+    uvicorn.run("server:app", host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

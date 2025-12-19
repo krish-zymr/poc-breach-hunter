@@ -4,8 +4,8 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Tuple
 
-from .intent_types import ActionType, EventDict, IntentResult, IntentType, RiskLevel
-from .risk_scorer import RiskScorer
+from intent_types import ActionType, EventDict, IntentResult, IntentType, RiskLevel
+from risk_scorer import RiskScorer
 
 
 class SimpleEmbedding:

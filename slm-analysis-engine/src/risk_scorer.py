@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from .intent_types import ActionType, EventDict, IntentType, RiskLevel
+from intent_types import ActionType, EventDict, IntentType, RiskLevel
 
 
 class RiskScorer:

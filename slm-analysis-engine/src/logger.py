@@ -3,7 +3,7 @@ import logging
 import sys
 
 # Create logger
-LOGGER = logging.getLogger("aegis_analysis_engine")
+LOGGER = logging.getLogger("analysis_engine")
 LOGGER.setLevel(logging.INFO)
 
 # Create console handler if not already configured
