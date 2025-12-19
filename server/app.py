@@ -10,6 +10,7 @@ import asyncio
 import time
 import traceback
 from openai import OpenAI, AsyncOpenAI
+import httpx
 from rule_analyzer import AnalysisAggregator
 
 # Module-level log to confirm file is loaded
@@ -109,8 +110,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")  # Custom on-prem URL (optional)
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "openai/gpt-5.2")  # Model name, defaults to openai/gpt-5.2
 
-# Static rule analyzer
-ANALYSIS_AGGREGATOR = AnalysisAggregator(rules_file="rules.json")
+# SLM Analysis Engine configuration
+SLM_ANALYSIS_ENGINE_URL = os.getenv("SLM_ANALYSIS_ENGINE_URL", "http://localhost:7000")
 
 # Static rule analyzer
 ANALYSIS_AGGREGATOR = AnalysisAggregator(rules_file="rules.json")
@@ -465,6 +466,119 @@ async def evaluate_action_static(action: StoredAction) -> Dict[str, Any]:
     }
 
 
+async def evaluate_action_with_slm(action: StoredAction) -> Dict[str, Any]:
+    """
+    Evaluate an action using SLM Analysis Engine to determine intent and risk classification.
+    Returns a dictionary with evaluation results.
+    """
+    print(
+        f"[Evaluate SLM] Starting SLM evaluation for action {action.id} (agent_id={action.agent_id}, type={action.action_type})",
+        file=sys.stdout,
+        flush=True,
+    )
+    
+    start_time = time.time()
+    
+    # Build request payload for SLM analysis engine
+    action_details_dict = action.action_details.model_dump() if hasattr(action.action_details, 'model_dump') else {
+        "command": action.action_details.command,
+        "file_path": action.action_details.file_path,
+        "method": action.action_details.method,
+        "url": action.action_details.url,
+        "headers": action.action_details.headers,
+        "body": action.action_details.body,
+    }
+    
+    # Build agent_info
+    agent_info = {
+        "agent_id": action.agent_id,
+        "process_id": action.process_id,
+        "host_address": action.host_address,
+    }
+    
+    # Prepare request payload
+    request_payload = {
+        "event_type": action.action_type,
+        "arguments": action_details_dict,
+        "agent_info": agent_info,
+    }
+    
+    try:
+        # Make async HTTP request to SLM analysis engine
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            url = f"{SLM_ANALYSIS_ENGINE_URL}/api/v1/classify"
+            print(
+                f"[Evaluate SLM] Calling SLM analysis engine at {url} for action {action.id}...",
+                file=sys.stdout,
+                flush=True,
+            )
+            
+            response = await client.post(url, json=request_payload)
+            response.raise_for_status()
+            
+            slm_result = response.json()
+            time_taken = time.time() - start_time
+            
+            # Extract results from SLM response
+            risk = slm_result.get("risk", "UNKNOWN").upper()
+            intent = slm_result.get("intent", "Unknown")
+            explanation = slm_result.get("explanation", "No explanation provided")
+            confidence = slm_result.get("confidence", 0.0)
+            classification_backend = slm_result.get("classification_backend", "unknown")
+            
+            print(
+                f"[Evaluate SLM] SLM evaluation completed for action {action.id}: "
+                f"risk={risk}, intent={intent}, confidence={confidence}, backend={classification_backend}",
+                file=sys.stdout,
+                flush=True,
+            )
+            
+            return {
+                "evaluation_by": f"SLM Analysis Engine ({classification_backend})",
+                "intent": intent,
+                "risk": risk,
+                "evaluation_time_taken": round(time_taken, 2),
+                "evaluation_description": explanation,
+                "slm_confidence": confidence,
+                "slm_backend": classification_backend,
+            }
+    except httpx.HTTPError as e:
+        time_taken = time.time() - start_time
+        error_msg = f"HTTP error during SLM evaluation: {str(e)}"
+        print(
+            f"[Evaluate SLM] {error_msg} for action {action.id}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return {
+            "evaluation_by": "SLM Analysis Engine (failed)",
+            "intent": "Evaluation failed",
+            "risk": "UNKNOWN",
+            "evaluation_time_taken": round(time_taken, 2),
+            "evaluation_description": error_msg,
+        }
+    except Exception as e:
+        time_taken = time.time() - start_time
+        error_msg = f"Error during SLM evaluation: {str(e)}"
+        print(
+            f"[Evaluate SLM] {error_msg} for action {action.id}",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            f"[Evaluate SLM] Traceback:\n{traceback.format_exc()}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return {
+            "evaluation_by": "SLM Analysis Engine (failed)",
+            "intent": "Evaluation failed",
+            "risk": "UNKNOWN",
+            "evaluation_time_taken": round(time_taken, 2),
+            "evaluation_description": error_msg,
+        }
+
+
 async def evaluate_action_with_openai(action: StoredAction) -> Dict[str, Any]:
     """
     Evaluate an action using OpenAI to determine intent and risk classification.
@@ -616,6 +730,11 @@ async def background_evaluation_worker():
         file=sys.stdout,
         flush=True,
     )
+    print(
+        f"[Evaluation Worker] SLM Analysis Engine URL: {SLM_ANALYSIS_ENGINE_URL}",
+        file=sys.stdout,
+        flush=True,
+    )
     
     # Initial heartbeat to confirm worker is running
     print(
@@ -692,60 +811,110 @@ async def background_evaluation_worker():
                         flush=True,
                     )
                     
-                    # Determine if we should use LLM
-                    should_use_llm = static_result.get("should_use_llm", True)
+                    # Determine if we should use SLM
+                    # Note: We reuse the static analyzer's "should_use_llm" field to determine SLM usage
+                    # This is intentional - the same logic that previously decided LLM usage now decides SLM usage
+                    should_use_slm = static_result.get("should_use_llm", True)
                     decision = static_result.get("decision", "ALLOW")
                     enforcement_action = static_result.get("enforcement_action", "NONE")
                     risk = static_result.get("risk", "UNKNOWN")
                     
-                    # CRITICAL/BLOCK decisions or ALLOW from soft rules should NEVER use LLM
+                    # CRITICAL/BLOCK decisions or ALLOW from soft rules should NEVER use SLM
                     # Soft rules return ALLOW with should_use_llm=False, so we respect that
                     if decision == "BLOCK" or risk == "CRITICAL" or static_result.get("risk_score", 0) >= 80:
-                        should_use_llm = False
+                        should_use_slm = False
                         print(
-                            f"[Evaluation Worker] FORCING should_use_llm=False for action {action.id} "
+                            f"[Evaluation Worker] FORCING should_use_slm=False for action {action.id} "
                             f"(decision={decision}, risk={risk}, risk_score={static_result.get('risk_score', 0)})",
                             file=sys.stdout,
                             flush=True,
                         )
                     # If decision is ALLOW and should_use_llm is False, it's from a soft rule
-                    elif decision == "ALLOW" and not should_use_llm:
+                    elif decision == "ALLOW" and not should_use_slm:
                         print(
                             f"[Evaluation Worker] Safe operation detected (soft rule) for action {action.id} "
-                            f"- skipping LLM evaluation.",
+                            f"- skipping SLM evaluation.",
                             file=sys.stdout,
                             flush=True,
                         )
                     
-                    eval_result = static_result
+                    # Start with static result
+                    eval_result = static_result.copy()
+                    total_evaluation_time = static_result.get("evaluation_time_taken", 0.0)
                     
-                    if should_use_llm:
+                    # Perform SLM evaluation if needed
+                    if should_use_slm:
                         print(
-                            f"[Evaluation Worker] Proceeding with OpenAI evaluation for action {action.id}...",
+                            f"[Evaluation Worker] Proceeding with SLM evaluation for action {action.id}...",
                             file=sys.stdout,
                             flush=True,
                         )
-                        llm_result = await evaluate_action_with_openai(action)
-                        # Merge LLM results with static results (LLM takes precedence for intent/description)
-                        eval_result = {
-                            **static_result,
-                            "evaluation_by": "Full analysis by LLM",
-                            "intent": llm_result.get("intent", static_result.get("intent")),
-                            "risk": llm_result.get("risk", static_result.get("risk")),
-                            "evaluation_time_taken": static_result.get("evaluation_time_taken", 0.0) + llm_result.get("evaluation_time_taken", 0.0),
-                            "evaluation_description": llm_result.get("evaluation_description", static_result.get("evaluation_description")),
-                        }
+                        slm_result = await evaluate_action_with_slm(action)
+                        total_evaluation_time += slm_result.get("evaluation_time_taken", 0.0)
+                        
+                        # Merge SLM results with static results (SLM takes precedence for intent/risk/description)
+                        eval_result.update({
+                            "evaluation_by": slm_result.get("evaluation_by", "SLM Analysis Engine"),
+                            "intent": slm_result.get("intent", static_result.get("intent")),
+                            "risk": slm_result.get("risk", static_result.get("risk")),
+                            "evaluation_time_taken": total_evaluation_time,
+                            "evaluation_description": slm_result.get("evaluation_description", static_result.get("evaluation_description")),
+                        })
+                        
+                        # Add SLM-specific fields
+                        if "slm_confidence" in slm_result:
+                            eval_result["slm_confidence"] = slm_result.get("slm_confidence")
+                        if "slm_backend" in slm_result:
+                            eval_result["slm_backend"] = slm_result.get("slm_backend")
+                        
+                        slm_risk = slm_result.get("risk", "UNKNOWN").upper()
                         print(
-                            f"[Evaluation Worker] OpenAI evaluation completed for action {action.id}: "
-                            f"risk={eval_result.get('risk')}, intent={eval_result.get('intent')}",
+                            f"[Evaluation Worker] SLM evaluation completed for action {action.id}: "
+                            f"risk={slm_risk}, intent={eval_result.get('intent')}",
                             file=sys.stdout,
                             flush=True,
                         )
+                        
+                        # Determine if we should use LLM based on SLM risk
+                        # If risk is LOW or CRITICAL, skip LLM evaluation
+                        should_use_llm = slm_risk not in ("LOW", "CRITICAL")
+                        
+                        if should_use_llm:
+                            print(
+                                f"[Evaluation Worker] SLM risk is {slm_risk}, proceeding with LLM evaluation for action {action.id}...",
+                                file=sys.stdout,
+                                flush=True,
+                            )
+                            llm_result = await evaluate_action_with_openai(action)
+                            total_evaluation_time += llm_result.get("evaluation_time_taken", 0.0)
+                            
+                            # Merge LLM results (LLM takes precedence for intent/description, but keep SLM risk if it's more severe)
+                            eval_result.update({
+                                "evaluation_by": "Full analysis by SLM and LLM",
+                                "intent": llm_result.get("intent", eval_result.get("intent")),
+                                "risk": llm_result.get("risk", eval_result.get("risk")),
+                                "evaluation_time_taken": total_evaluation_time,
+                                "evaluation_description": llm_result.get("evaluation_description", eval_result.get("evaluation_description")),
+                            })
+                            
+                            print(
+                                f"[Evaluation Worker] LLM evaluation completed for action {action.id}: "
+                                f"risk={eval_result.get('risk')}, intent={eval_result.get('intent')}",
+                                file=sys.stdout,
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"[Evaluation Worker] Skipping LLM evaluation for action {action.id} "
+                                f"(SLM risk={slm_risk} is LOW or CRITICAL). Using SLM analysis only.",
+                                file=sys.stdout,
+                                flush=True,
+                            )
                     else:
                         # Ensure evaluation_by is set correctly for rule-based analysis
                         eval_result["evaluation_by"] = "Rule based analysis"
                         print(
-                            f"[Evaluation Worker] Skipping OpenAI evaluation for action {action.id} "
+                            f"[Evaluation Worker] Skipping SLM evaluation for action {action.id} "
                             f"(decision={decision}, enforcement={enforcement_action}, risk={risk}). "
                             f"Using rule-based analysis only.",
                             file=sys.stdout,
@@ -824,6 +993,11 @@ async def startup_event():
         )
     print(
         f"[Startup] OpenAI model: {OPENAI_MODEL}",
+        file=sys.stdout,
+        flush=True,
+    )
+    print(
+        f"[Startup] SLM Analysis Engine URL: {SLM_ANALYSIS_ENGINE_URL}",
         file=sys.stdout,
         flush=True,
     )
