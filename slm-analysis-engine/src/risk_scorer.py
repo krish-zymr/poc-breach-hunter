@@ -187,10 +187,8 @@ class RiskScorer:
             return RiskLevel.HIGH
         elif score >= 0.4:
             return RiskLevel.MEDIUM
-        elif score >= 0.2:
-            return RiskLevel.LOW
         else:
-            return RiskLevel.SAFE
+            return RiskLevel.LOW
 
     @classmethod
     def is_critical_file_write(cls, action_type: ActionType, event: EventDict) -> bool:
